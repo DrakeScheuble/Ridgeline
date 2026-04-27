@@ -12470,11 +12470,44 @@ async function spLoadSite(token){
   const site = await spApiGet(token,`https://graph.microsoft.com/v1.0/sites/${SP_HOSTNAME}:${SP_SITE_PATH}`);
   _spSiteId = site.id;
   const drives = await spApiGet(token,`https://graph.microsoft.com/v1.0/sites/${_spSiteId}/drives`);
-  const drive = drives.value.find(d=>d.name===SP_LIBRARY);
-  if(!drive) throw new Error(`Document library "${SP_LIBRARY}" not found. Available: ${drives.value.map(d=>d.name).join(', ')}`);
-  _spDriveId = drive.id;
-  _spStack = [{id:'root', name:SP_LIBRARY}];
-  await spLoadFolder(token,'root');
+  if(_spPickingNewProjectFolder){
+    // Show all libraries so user can navigate to any folder
+    spRenderLibraries(drives.value);
+  } else {
+    const drive = drives.value.find(d=>d.name===SP_LIBRARY);
+    if(!drive) throw new Error(`Document library "${SP_LIBRARY}" not found. Available: ${drives.value.map(d=>d.name).join(', ')}`);
+    _spDriveId = drive.id;
+    _spStack = [{id:'root', name:SP_LIBRARY}];
+    await spLoadFolder(token,'root');
+  }
+}
+
+function spRenderLibraries(drives){
+  const body=document.getElementById('sp-body');
+  const rows=drives.map(d=>{
+    const safeId=d.id.replace(/'/g,"\\'");
+    const safeName=(d.name||d.webUrl||'Library').replace(/'/g,"\\'");
+    return`<div class="sp-row" style="cursor:pointer" onclick="spOpenLibrary('${safeId}','${safeName}')">
+      <div class="sp-icon sp-dir"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="11" rx="1"/><path d="M1 7h14M5 3V1M11 3V1"/></svg></div>
+      <div class="sp-name sp-row-folder">${esc(d.name||'Documents')}</div>
+      <div class="sp-meta">Document library</div>
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--tt);flex-shrink:0"><path d="M6 4l4 4-4 4"/></svg>
+    </div>`;
+  }).join('');
+  const pickBanner=`<div style="background:#eef6ee;border-bottom:1px solid #c3e0c3;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#27500A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4a1 1 0 011-1h4l2 2h6a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
+    <span style="font-size:12px;color:#27500A;flex:1">Select a document library, then navigate to the folder containing your bid template Excel files.</span>
+  </div>`;
+  body.innerHTML=`${pickBanner}<div class="sp-crumb"><span class="sp-crumb-cur">SharePoint — All Libraries</span></div><div style="flex:1;overflow-y:auto">${rows}</div>`;
+}
+
+async function spOpenLibrary(driveId,name){
+  _spDriveId=driveId;
+  _spStack=[{id:'root',name}];
+  try{
+    const token=await spGetToken();
+    await spLoadFolder(token,'root');
+  }catch(e){spSetStatus(`Error: ${esc(e.message)}`);}
 }
 
 async function spLoadFolder(token, itemId){
@@ -12496,8 +12529,9 @@ function spRender(items){
   ).join(' ');
 
   const folders = items.filter(x=>x.folder);
-  const files   = items.filter(x=>x.file && /\.(pdf|png|jpg|jpeg|gif|webp)$/i.test(x.name));
-  const skipped = items.filter(x=>x.file && !/\.(pdf|png|jpg|jpeg|gif|webp)$/i.test(x.name));
+  const visibleExts = _spPickingNewProjectFolder ? /\.(pdf|png|jpg|jpeg|gif|webp|xlsx?|xls)$/i : /\.(pdf|png|jpg|jpeg|gif|webp)$/i;
+  const files   = items.filter(x=>x.file && visibleExts.test(x.name));
+  const skipped = items.filter(x=>x.file && !visibleExts.test(x.name));
 
   const folderRows = folders.map(f=>{
     const safeId=f.id.replace(/'/g,"\\'");
