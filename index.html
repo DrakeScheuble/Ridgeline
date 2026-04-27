@@ -12467,41 +12467,74 @@ async function spApiGet(token, url){
 
 async function spLoadSite(token){
   spSetStatus('Loading site…');
+  if(_spPickingNewProjectFolder){
+    await spPickLoadSites(token);
+    return;
+  }
   const site = await spApiGet(token,`https://graph.microsoft.com/v1.0/sites/${SP_HOSTNAME}:${SP_SITE_PATH}`);
   _spSiteId = site.id;
   const drives = await spApiGet(token,`https://graph.microsoft.com/v1.0/sites/${_spSiteId}/drives`);
-  if(_spPickingNewProjectFolder){
-    // Show all libraries so user can navigate to any folder
-    spRenderLibraries(drives.value);
-  } else {
-    const drive = drives.value.find(d=>d.name===SP_LIBRARY);
-    if(!drive) throw new Error(`Document library "${SP_LIBRARY}" not found. Available: ${drives.value.map(d=>d.name).join(', ')}`);
-    _spDriveId = drive.id;
-    _spStack = [{id:'root', name:SP_LIBRARY}];
-    await spLoadFolder(token,'root');
-  }
+  const drive = drives.value.find(d=>d.name===SP_LIBRARY);
+  if(!drive) throw new Error(`Document library "${SP_LIBRARY}" not found. Available: ${drives.value.map(d=>d.name).join(', ')}`);
+  _spDriveId = drive.id;
+  _spStack = [{id:'root', name:SP_LIBRARY}];
+  await spLoadFolder(token,'root');
 }
 
-function spRenderLibraries(drives){
-  const body=document.getElementById('sp-body');
-  const rows=drives.map(d=>{
-    const safeId=d.id.replace(/'/g,"\\'");
-    const safeName=(d.name||d.webUrl||'Library').replace(/'/g,"\\'");
-    return`<div class="sp-row" style="cursor:pointer" onclick="spOpenLibrary('${safeId}','${safeName}')">
+// ── Picking mode: site → library → folder navigation ─────────────
+let _spPickSiteName='';
+
+async function spPickLoadSites(token){
+  spSetStatus('Loading sites…');
+  const data=await spApiGet(token,`https://graph.microsoft.com/v1.0/sites?search=*&$top=50&$select=id,displayName,webUrl`);
+  const sites=data.value||[];
+  const pickBanner=`<div style="background:#eef6ee;border-bottom:1px solid #c3e0c3;padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#27500A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4a1 1 0 011-1h4l2 2h6a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
+    <span style="font-size:12px;color:#27500A">Select the site, then the library, then navigate to your bid template folder and click <strong>Use This Folder</strong>.</span>
+  </div>`;
+  const rows=sites.map(s=>{
+    const safeId=s.id.replace(/'/g,"\\'");
+    const safeName=(s.displayName||s.webUrl||'Site').replace(/'/g,"\\'");
+    return`<div class="sp-row" style="cursor:pointer" onclick="spPickOpenSite('${safeId}','${safeName}')">
       <div class="sp-icon sp-dir"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="11" rx="1"/><path d="M1 7h14M5 3V1M11 3V1"/></svg></div>
+      <div class="sp-name sp-row-folder">${esc(s.displayName||s.webUrl)}</div>
+      <div class="sp-meta" style="font-size:10px;color:var(--tt)">${esc((s.webUrl||'').replace(/^https?:\/\//,''))}</div>
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--tt);flex-shrink:0"><path d="M6 4l4 4-4 4"/></svg>
+    </div>`;
+  }).join('');
+  document.getElementById('sp-body').innerHTML=`${pickBanner}<div class="sp-crumb"><span class="sp-crumb-cur">All Sites</span></div><div style="flex:1;overflow-y:auto">${rows||'<div style="padding:24px;color:var(--tt);font-size:13px">No sites found</div>'}</div>`;
+}
+
+async function spPickOpenSite(siteId,siteName){
+  _spPickSiteName=siteName;
+  spSetStatus('Loading libraries…');
+  try{
+    const token=await spGetToken();
+    const drives=await spApiGet(token,`https://graph.microsoft.com/v1.0/sites/${siteId}/drives`);
+    spPickRenderLibraries(siteId,siteName,drives.value);
+  }catch(e){spSetStatus(`Error: ${esc(e.message)}`);}
+}
+
+function spPickRenderLibraries(siteId,siteName,drives){
+  const pickBanner=`<div style="background:#eef6ee;border-bottom:1px solid #c3e0c3;padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#27500A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4a1 1 0 011-1h4l2 2h6a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
+    <span style="font-size:12px;color:#27500A;flex:1">Select a document library to browse.</span>
+    <button class="btn" style="font-size:11px;padding:3px 10px" onclick="spPickGoBackToSites()">← Sites</button>
+  </div>`;
+  const rows=drives.map(d=>{
+    const safeDriveId=d.id.replace(/'/g,"\\'");
+    const safeName=(d.name||'Documents').replace(/'/g,"\\'");
+    return`<div class="sp-row" style="cursor:pointer" onclick="spPickOpenLibrary('${safeDriveId}','${safeName}')">
+      <div class="sp-icon sp-dir"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4a1 1 0 011-1h4l2 2h6a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg></div>
       <div class="sp-name sp-row-folder">${esc(d.name||'Documents')}</div>
       <div class="sp-meta">Document library</div>
       <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--tt);flex-shrink:0"><path d="M6 4l4 4-4 4"/></svg>
     </div>`;
   }).join('');
-  const pickBanner=`<div style="background:#eef6ee;border-bottom:1px solid #c3e0c3;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0">
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#27500A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4a1 1 0 011-1h4l2 2h6a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4z"/></svg>
-    <span style="font-size:12px;color:#27500A;flex:1">Select a document library, then navigate to the folder containing your bid template Excel files.</span>
-  </div>`;
-  body.innerHTML=`${pickBanner}<div class="sp-crumb"><span class="sp-crumb-cur">SharePoint — All Libraries</span></div><div style="flex:1;overflow-y:auto">${rows}</div>`;
+  document.getElementById('sp-body').innerHTML=`${pickBanner}<div class="sp-crumb"><span class="sp-crumb-seg" style="cursor:pointer" onclick="spPickGoBackToSites()">All Sites</span><span style="color:var(--tt)">›</span><span class="sp-crumb-cur">${esc(siteName)}</span></div><div style="flex:1;overflow-y:auto">${rows}</div>`;
 }
 
-async function spOpenLibrary(driveId,name){
+async function spPickOpenLibrary(driveId,name){
   _spDriveId=driveId;
   _spStack=[{id:'root',name}];
   try{
@@ -12509,6 +12542,10 @@ async function spOpenLibrary(driveId,name){
     await spLoadFolder(token,'root');
   }catch(e){spSetStatus(`Error: ${esc(e.message)}`);}
 }
+
+async function spPickGoBackToSites(){
+  try{const token=await spGetToken();await spPickLoadSites(token);}
+  catch(e){spSetStatus(`Error: ${esc(e.message)}`);}
 
 async function spLoadFolder(token, itemId){
   spSetStatus('Loading…');
