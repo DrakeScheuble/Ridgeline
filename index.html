@@ -12546,6 +12546,7 @@ async function spPickOpenLibrary(driveId,name){
 async function spPickGoBackToSites(){
   try{const token=await spGetToken();await spPickLoadSites(token);}
   catch(e){spSetStatus(`Error: ${esc(e.message)}`);}
+}
 
 async function spLoadFolder(token, itemId){
   spSetStatus('Loading…');
