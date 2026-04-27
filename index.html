@@ -1803,10 +1803,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
           Back to Projects
         </button>
         <div style="font-size:15px;font-weight:600;color:var(--tp);flex:1;padding-left:12px">New Project</div>
-        <button class="btn" id="sp-import-btn" onclick="importProjectFromSP()" style="font-size:12px;display:flex;align-items:center;gap:5px">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v9M4 7l4 4 4-4"/><path d="M2 13h12"/></svg>
-          Import from SharePoint
-        </button>
         <div class="avatar" id="user-avatar2">AD</div>
       </div>
       <div id="form-body">
@@ -2955,6 +2951,7 @@ function renderEstNavBar(canEdit,extra=''){
     </div>
     <div style="flex:1"></div>
     ${extra}
+    ${canEdit?`<button class="btn" onclick="importBidFromSP()" style="font-size:12px;display:flex;align-items:center;gap:5px"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v9M4 7l4 4 4-4"/><path d="M2 13h12"/></svg>Import from SharePoint</button>`:''}
     ${canEdit?`<button class="btn primary" onclick="estNewBid()" style="font-size:12px">+ New Bid</button>`:''}
   </div>`;
 }
@@ -3183,18 +3180,17 @@ async function estParseWithClaude(subject,bodyText,fromName){
   return JSON.parse(m[0]);
 }
 
-// ── New Project: Import from SharePoint Excel ─────────────────────
-async function parseExcelWithClaude(cellRows){
+// ── Estimating: Import Bid from SharePoint Excel ──────────────────
+async function parseBidExcelWithClaude(cellRows){
   const key=(SETUP.anthropicKey||'').trim();
   if(!key)throw new Error('Anthropic API key not configured — open ⚙ Email setup to add one');
-  // Convert rows to readable text; handle both vertical (label|value) and horizontal (header row)
   const lines=cellRows.map(r=>r.map(c=>String(c??'').trim()).filter(Boolean).join(' | ')).filter(Boolean);
   const sheetText=lines.slice(0,80).join('\n');
-  const prompt=`Extract construction project details from this spreadsheet data. Return ONLY a valid JSON object, no other text.\n\nSpreadsheet:\n${sheetText}\n\nReturn JSON with these exact fields (use null if not found):\n{"jobNumber":null,"jobName":null,"street":null,"city":null,"state":null,"zip":null,"gcName":null,"gcContract":null,"pcName":null,"pcContact":null,"scName":null,"scContact":null,"scopeWood":false,"scopeSteel":false,"woodShop":false,"woodSite":false,"steelShop":false,"steelField":false,"woodContract":null,"steelContract":null,"sf":null,"tonnage":null,"notes":null}`;
+  const prompt=`Extract construction bid invite details from this spreadsheet. Return ONLY a valid JSON object, no other text.\n\nSpreadsheet:\n${sheetText}\n\nReturn JSON with these exact fields (use null if not found, booleans for yes/no fields):\n{"jobName":null,"street":null,"city":null,"state":null,"zip":null,"gcName":null,"gcContact":null,"bidDueDate":null,"scopeWood":false,"scopeSteel":false,"sf":null,"tonnage":null,"prevailingWage":false,"workforceTraining":false,"outOfTown":false,"projectDescription":null,"notes":null}`;
   const res=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:800,messages:[{role:'user',content:prompt}]})
+    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,messages:[{role:'user',content:prompt}]})
   });
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`API error ${res.status}`);}
   const data=await res.json();
@@ -3204,24 +3200,20 @@ async function parseExcelWithClaude(cellRows){
   return JSON.parse(m[0]);
 }
 
-async function importProjectFromSP(){
-  const btn=document.getElementById('sp-import-btn');
-  if(btn){btn.disabled=true;btn.textContent='Searching…';}
+async function importBidFromSP(){
   try{
     const token=await spGetToken();
 
-    // ── Step 1: resolve the folder to search ──────────────────────
+    // ── Step 1: resolve configured folder ────────────────────────
     let folderId=SETUP.newProjectFolderItemId;
     let driveId=SETUP.newProjectFolderDriveId;
 
     if(!folderId){
-      // No folder configured yet — open the SP browser to pick one, then re-run
-      if(btn){btn.disabled=false;btn.textContent='Import from SharePoint';}
       showModal(`<div class="modal" style="width:440px;max-width:95vw">
-        <div class="modal-header"><div class="modal-title">Configure New Project Folder</div><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-header"><div class="modal-title">Configure Bid Templates Folder</div><button class="modal-close" onclick="closeModal()">×</button></div>
         <div style="padding:18px 20px;font-size:13px;color:var(--ts);line-height:1.6">
-          No SharePoint folder is configured yet.<br>
-          Use the SharePoint browser to navigate to the folder that contains your new project Excel files, then click <strong>Use This Folder</strong>.
+          No SharePoint folder configured yet.<br>
+          Browse to the folder that contains your bid template Excel files, then click <strong>Use This Folder</strong>.
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;padding:0 20px 18px">
           <button class="btn" onclick="closeModal()">Cancel</button>
@@ -3231,100 +3223,78 @@ async function importProjectFromSP(){
       return;
     }
 
-    // ── Step 2: list the folder contents ─────────────────────────
+    // ── Step 2: list folder contents ─────────────────────────────
     showToast('Scanning folder…');
-    const listUrl=`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$orderby=lastModifiedDateTime desc&$top=100&$select=id,name,size,lastModifiedDateTime,file`;
-    const listRes=await fetch(listUrl,{headers:{Authorization:`Bearer ${token}`}});
+    const listRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$orderby=lastModifiedDateTime desc&$top=100&$select=id,name,size,lastModifiedDateTime,file`,{headers:{Authorization:`Bearer ${token}`}});
     if(!listRes.ok)throw new Error(`Could not read folder (${listRes.status})`);
-    const listData=await listRes.json();
-    const items=(listData.value||[]);
+    const items=(await listRes.json()).value||[];
 
-    // ── Step 3: find xlsx files ───────────────────────────────────
+    // ── Step 3: find Excel files, ask Claude to pick if multiple ──
     const xlsxFiles=items.filter(i=>i.file&&/\.xlsx?$/i.test(i.name));
     if(!xlsxFiles.length)throw new Error(`No Excel files found in "${SETUP.newProjectFolderName||'configured folder'}"`);
 
-    // Pick the right file: if only one, use it; otherwise ask Claude
     let targetId,targetName;
     if(xlsxFiles.length===1){
-      targetId=xlsxFiles[0].id;
-      targetName=xlsxFiles[0].name;
+      targetId=xlsxFiles[0].id; targetName=xlsxFiles[0].name;
     } else {
       const key=(SETUP.anthropicKey||'').trim();
       if(!key){
-        // No Claude key — just use the most recently modified
-        targetId=xlsxFiles[0].id;
-        targetName=xlsxFiles[0].name;
+        targetId=xlsxFiles[0].id; targetName=xlsxFiles[0].name;
       } else {
-        showToast(`Found ${xlsxFiles.length} Excel files — asking Claude to identify the right one…`);
+        showToast(`Found ${xlsxFiles.length} Excel files — asking Claude to identify the bid sheet…`);
         const fileList=xlsxFiles.map((f,i)=>`${i+1}. ${f.name} (modified ${f.lastModifiedDateTime?.slice(0,10)||'unknown'})`).join('\n');
-        const pickPrompt=`A SharePoint folder for a new construction project contains these Excel files:\n${fileList}\n\nWhich file number is most likely the project setup / job information sheet? Reply with ONLY the number.`;
         const pickRes=await fetch('https://api.anthropic.com/v1/messages',{
           method:'POST',
           headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
-          body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:8,messages:[{role:'user',content:pickPrompt}]})
+          body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:8,messages:[{role:'user',content:`A SharePoint folder for a new construction bid contains these files:\n${fileList}\n\nWhich file number is most likely the bid invite / project info sheet? Reply with ONLY the number.`}]})
         });
         if(pickRes.ok){
-          const pickData=await pickRes.json();
-          const idx=parseInt((pickData.content?.[0]?.text||'1').trim())-1;
+          const idx=parseInt(((await pickRes.json()).content?.[0]?.text||'1').trim())-1;
           const picked=xlsxFiles[Math.max(0,Math.min(idx,xlsxFiles.length-1))];
-          targetId=picked.id;targetName=picked.name;
+          targetId=picked.id; targetName=picked.name;
         } else {
-          targetId=xlsxFiles[0].id;targetName=xlsxFiles[0].name;
+          targetId=xlsxFiles[0].id; targetName=xlsxFiles[0].name;
         }
       }
     }
 
-    // ── Step 4: read the workbook via Graph Excel API ─────────────
+    // ── Step 4: read workbook via Graph Excel API ─────────────────
     showToast(`Reading ${targetName}…`);
-    const wsUrl=`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/workbook/worksheets/0/usedRange?$select=values`;
-    const wsRes=await fetch(wsUrl,{headers:{Authorization:`Bearer ${token}`}});
+    const wsRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/workbook/worksheets/0/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
     if(!wsRes.ok)throw new Error(`Could not read workbook (${wsRes.status})`);
-    const wsData=await wsRes.json();
-    const cellRows=wsData.values||[];
+    const cellRows=(await wsRes.json()).values||[];
     if(!cellRows.length)throw new Error('Excel file appears to be empty');
 
-    // ── Step 5: parse with Claude → fill the form ─────────────────
+    // ── Step 5: parse with Claude → create bid ────────────────────
     showToast('Parsing with Claude…');
-    const fields=await parseExcelWithClaude(cellRows);
-    _fillNewProjectForm(fields,targetName);
+    const f=await parseBidExcelWithClaude(cellRows);
+    const bid={
+      id:uid(),status:'invite',
+      jobName:f.jobName||'',street:f.street||'',city:f.city||'',state:f.state||'',zip:f.zip||'',
+      gcName:f.gcName||'',gcContact:f.gcContact||'',
+      pcName:'',pcContact:'',scName:'',scContact:'',
+      scopeWood:!!f.scopeWood,scopeSteel:!!f.scopeSteel,
+      sf:f.sf||'',tonnage:f.tonnage||'',
+      bidDueDate:f.bidDueDate||'',
+      inviteDate:new Date().toISOString().slice(0,10),
+      plansLink:'',workforceTraining:!!f.workforceTraining,prevailingWage:!!f.prevailingWage,
+      pwDetermination:'',outOfTown:!!f.outOfTown,
+      revisions:[],correspondence:[],scopeChecks:{},customScopeItems:[],
+      projectDescription:f.projectDescription||'',scopeNotes:f.notes||'',
+      createdAt:new Date().toISOString(),projectId:null
+    };
+    EST_BIDS.unshift(bid);
+    getProjectTasks(bid.id).push({id:uid(),text:'Send out for supplier quotes',dueDate:'',done:false,createdAt:new Date().toISOString()});
+    _estActiveBidId=bid.id; _estDetailTab='info';
+    renderContent(); scheduleSave();
+    showToast(`Bid created from ${targetName} — review and update as needed`);
 
   } catch(e){
     showToast(`Import failed: ${e.message}`);
-  } finally {
-    if(btn){btn.disabled=false;btn.innerHTML='<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v9M4 7l4 4 4-4"/><path d="M2 13h12"/></svg> Import from SharePoint';}
   }
 }
 
-function _fillNewProjectForm(f,sourceName){
-  const set=(id,val)=>{if(val==null||val==='')return;const el=document.getElementById(id);if(el)el.value=val;};
-  const setChk=(id,val)=>{const el=document.getElementById(id);if(el){el.checked=!!val;el.dispatchEvent(new Event('change'));}};
-  set('f-job-number',f.jobNumber);
-  set('f-job-name',f.jobName);
-  set('f-street',f.street);
-  set('f-city',f.city);
-  set('f-state',f.state);
-  set('f-zip',f.zip);
-  set('f-gc-name',f.gcName);
-  set('f-gc-contract',f.gcContract);
-  set('f-pc-name',f.pcName);
-  set('f-pc-contact',f.pcContact);
-  set('f-sc-name',f.scName);
-  set('f-sc-contact',f.scContact);
-  set('f-wood-contract',f.woodContract);
-  set('f-steel-contract',f.steelContract);
-  set('f-sf',f.sf);
-  set('f-tonnage',f.tonnage);
-  set('f-notes',f.notes);
-  if(f.scopeWood||f.woodShop||f.woodSite){setChk('f-wood-shop',f.woodShop||f.scopeWood);setChk('f-wood-site',f.woodSite);}
-  if(f.scopeSteel||f.steelShop||f.steelField){setChk('f-steel-shop',f.steelShop||f.scopeSteel);setChk('f-steel-field',f.steelField);}
-  updateScopeCard();
-  showToast(`Form filled from ${sourceName} — review and submit`);
-  document.getElementById('form-body')?.scrollTo({top:0,behavior:'smooth'});
-}
-
 async function spPickNewProjectFolder(){
-  // Reuse the existing SP browser (spOpen) but intercept the folder selection
-  // We add a temporary "Use This Folder" bar that appears at the top of the browser
   _spPickingNewProjectFolder=true;
   spOpen();
 }
@@ -3337,7 +3307,7 @@ function spConfirmNewProjectFolder(itemId,driveId,name){
   _spPickingNewProjectFolder=false;
   scheduleSave();
   closeModal();
-  showToast(`New project folder set to "${name}" — click Import from SharePoint to fill the form`);
+  showToast(`Folder set to "${name}" — click Import from SharePoint to create a bid`);
 }
 
 async function estSyncEmails(){
