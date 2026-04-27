@@ -3279,25 +3279,24 @@ async function importBidFromSP(){
       }
     }
 
-    // ── Step 4: read workbook via Graph Excel API ─────────────────
+    // ── Step 4: download file and parse with XLSX.js ─────────────
     showToast(`Reading ${targetName}…`);
-    const base=`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/workbook`;
-    const sheetListRes=await fetch(`${base}/worksheets?$select=id,name`,{headers:{Authorization:`Bearer ${token}`}});
-    if(!sheetListRes.ok)throw new Error(`Could not open workbook (${sheetListRes.status}) — make sure the file is a .xlsx and not password protected`);
-    const sheets=(await sheetListRes.json()).value||[];
-    if(!sheets.length)throw new Error('Workbook has no worksheets');
+    const fileRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/content`,{headers:{Authorization:`Bearer ${token}`}});
+    if(!fileRes.ok)throw new Error(`Could not download file (${fileRes.status})`);
+    const arrayBuf=await fileRes.arrayBuffer();
+    const wb=XLSX.read(new Uint8Array(arrayBuf),{type:'array'});
+    if(!wb.SheetNames.length)throw new Error('Workbook has no worksheets');
 
-    // Read first sheet plus "Project Summary" if it exists — combine for richer data
-    const readSheet=async(s)=>{
-      const res=await fetch(`${base}/worksheets/${encodeURIComponent(s.id)}/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
-      if(!res.ok)return[];
-      return(await res.json()).values||[];
+    // Read first sheet + Project Summary sheet if present
+    const sheetToRows=name=>{
+      const ws=wb.Sheets[name];
+      return ws?XLSX.utils.sheet_to_json(ws,{header:1,defval:''}):[];
     };
-    const primaryRows=await readSheet(sheets[0]);
+    const primaryRows=sheetToRows(wb.SheetNames[0]);
     if(!primaryRows.length)throw new Error('Excel file appears to be empty');
-    const summarySheet=sheets.find(s=>/summary|project.?summary/i.test(s.name)&&s.id!==sheets[0].id);
-    const summaryRows=summarySheet?await readSheet(summarySheet):[];
-    const allRows=[...primaryRows,...(summaryRows.length?[['--- Project Summary ---'],...summaryRows]:[])];
+    const summaryName=wb.SheetNames.find(n=>/summary/i.test(n)&&n!==wb.SheetNames[0]);
+    const summaryRows=summaryName?sheetToRows(summaryName):[];
+    const allRows=[...primaryRows,...(summaryRows.length?[['--- '+summaryName+' ---'],...summaryRows]:[])];
 
     // ── Step 5: parse with Claude → create bid ────────────────────
     showToast('Parsing with Claude…');
