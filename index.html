@@ -3223,6 +3223,27 @@ async function importBidFromSP(){
       return;
     }
 
+    // ── Folder is configured — confirm or let user change ─────────
+    const folderName=SETUP.newProjectFolderName||'Configured folder';
+    const confirmed=await new Promise(resolve=>{
+      showModal(`<div class="modal" style="width:420px;max-width:95vw">
+        <div class="modal-header"><div class="modal-title">Import Bid from SharePoint</div><button class="modal-close" onclick="closeModal();resolve(false)">×</button></div>
+        <div style="padding:16px 20px">
+          <div style="font-size:12px;color:var(--tt);margin-bottom:6px">Searching in:</div>
+          <div style="font-size:13px;font-weight:600;color:var(--tp);padding:8px 12px;background:var(--bg2);border-radius:6px;border:1px solid var(--cb)">${esc(folderName)}</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 20px 18px">
+          <button class="btn ghost" style="font-size:12px" onclick="closeModal();window._spImportResolve(false);spPickNewProjectFolder()">Change Folder</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="closeModal();window._spImportResolve(false)">Cancel</button>
+            <button class="btn primary" onclick="closeModal();window._spImportResolve(true)">Search Here</button>
+          </div>
+        </div>
+      </div>`);
+      window._spImportResolve=resolve;
+    });
+    if(!confirmed)return;
+
     // ── Step 2: list folder contents ─────────────────────────────
     showToast('Scanning folder…');
     const listRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$orderby=lastModifiedDateTime desc&$top=100&$select=id,name,size,lastModifiedDateTime,file`,{headers:{Authorization:`Bearer ${token}`}});
