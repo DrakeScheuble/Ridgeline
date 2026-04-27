@@ -3281,8 +3281,14 @@ async function importBidFromSP(){
 
     // ── Step 4: read workbook via Graph Excel API ─────────────────
     showToast(`Reading ${targetName}…`);
-    const wsRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/workbook/worksheets/0/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
-    if(!wsRes.ok)throw new Error(`Could not read workbook (${wsRes.status})`);
+    const base=`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/workbook`;
+    const sheetListRes=await fetch(`${base}/worksheets?$select=id,name`,{headers:{Authorization:`Bearer ${token}`}});
+    if(!sheetListRes.ok)throw new Error(`Could not open workbook (${sheetListRes.status}) — make sure the file is a .xlsx and not password protected`);
+    const sheets=(await sheetListRes.json()).value||[];
+    if(!sheets.length)throw new Error('Workbook has no worksheets');
+    const sheetId=encodeURIComponent(sheets[0].id);
+    const wsRes=await fetch(`${base}/worksheets/${sheetId}/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
+    if(!wsRes.ok)throw new Error(`Could not read worksheet (${wsRes.status})`);
     const cellRows=(await wsRes.json()).values||[];
     if(!cellRows.length)throw new Error('Excel file appears to be empty');
 
