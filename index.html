@@ -3186,7 +3186,7 @@ async function parseBidExcelWithClaude(cellRows){
   if(!key)throw new Error('Anthropic API key not configured — open ⚙ Email setup to add one');
   const lines=cellRows.map(r=>r.map(c=>String(c??'').trim()).filter(Boolean).join(' | ')).filter(Boolean);
   const sheetText=lines.slice(0,80).join('\n');
-  const prompt=`Extract construction bid invite details from this spreadsheet. Return ONLY a valid JSON object, no other text.\n\nSpreadsheet:\n${sheetText}\n\nReturn JSON with these exact fields (use null if not found, booleans for yes/no fields):\n{"jobName":null,"street":null,"city":null,"state":null,"zip":null,"gcName":null,"gcContact":null,"bidDueDate":null,"scopeWood":false,"scopeSteel":false,"sf":null,"tonnage":null,"prevailingWage":false,"workforceTraining":false,"outOfTown":false,"projectDescription":null,"notes":null}`;
+  const prompt=`Extract construction bid invite details from this spreadsheet data (may include multiple sheets). Return ONLY a valid JSON object, no other text.\n\nSpreadsheet:\n${sheetText}\n\nReturn JSON with these exact fields (use null if not found, booleans for yes/no fields):\n{"jobName":null,"street":null,"city":null,"state":null,"zip":null,"gcName":null,"gcContact":null,"bidDueDate":null,"scopeWood":false,"scopeSteel":false,"sf":null,"tonnage":null,"prevailingWage":false,"workforceTraining":false,"outOfTown":false,"projectDescription":null,"notes":null}\n\nNotes:\n- bidDueDate must be YYYY-MM-DD format. Parse dates like "Friday 05/08/2026 - 5:00 PM PST" as "2026-05-08"\n- gcContact should combine GC estimator name + phone + email if available\n- jobName: prefer the full project name over a short filename\n- scopeWood/scopeSteel: true if any wood or steel scope is described\n- sf: extract numeric value only from strings like "36,040 SF"\n- prevailingWage: false if "NOT REQUIRED" is stated`;
   const res=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
@@ -3286,15 +3286,22 @@ async function importBidFromSP(){
     if(!sheetListRes.ok)throw new Error(`Could not open workbook (${sheetListRes.status}) — make sure the file is a .xlsx and not password protected`);
     const sheets=(await sheetListRes.json()).value||[];
     if(!sheets.length)throw new Error('Workbook has no worksheets');
-    const sheetId=encodeURIComponent(sheets[0].id);
-    const wsRes=await fetch(`${base}/worksheets/${sheetId}/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
-    if(!wsRes.ok)throw new Error(`Could not read worksheet (${wsRes.status})`);
-    const cellRows=(await wsRes.json()).values||[];
-    if(!cellRows.length)throw new Error('Excel file appears to be empty');
+
+    // Read first sheet plus "Project Summary" if it exists — combine for richer data
+    const readSheet=async(s)=>{
+      const res=await fetch(`${base}/worksheets/${encodeURIComponent(s.id)}/usedRange?$select=values`,{headers:{Authorization:`Bearer ${token}`}});
+      if(!res.ok)return[];
+      return(await res.json()).values||[];
+    };
+    const primaryRows=await readSheet(sheets[0]);
+    if(!primaryRows.length)throw new Error('Excel file appears to be empty');
+    const summarySheet=sheets.find(s=>/summary|project.?summary/i.test(s.name)&&s.id!==sheets[0].id);
+    const summaryRows=summarySheet?await readSheet(summarySheet):[];
+    const allRows=[...primaryRows,...(summaryRows.length?[['--- Project Summary ---'],...summaryRows]:[])];
 
     // ── Step 5: parse with Claude → create bid ────────────────────
     showToast('Parsing with Claude…');
-    const f=await parseBidExcelWithClaude(cellRows);
+    const f=await parseBidExcelWithClaude(allRows);
     const bid={
       id:uid(),status:'invite',
       jobName:f.jobName||'',street:f.street||'',city:f.city||'',state:f.state||'',zip:f.zip||'',
