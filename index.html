@@ -3283,14 +3283,21 @@ async function importBidFromSP(){
     // ── Step 4: download file and parse with XLSX.js ─────────────
     showToast(`Reading ${targetName}…`);
     // Fetch pre-authenticated download URL to avoid CORS redirect issues
-    const metaRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}?$select=id,%40microsoft.graph.downloadUrl`,{headers:{Authorization:`Bearer ${token}`}});
+    const metaRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}`,{headers:{Authorization:`Bearer ${token}`}});
     if(!metaRes.ok)throw new Error(`Could not get file metadata (${metaRes.status})`);
     const meta=await metaRes.json();
-    const downloadUrl=meta['@microsoft.graph.downloadUrl'];
-    if(!downloadUrl)throw new Error('No download URL returned — check file permissions');
-    const fileRes=await fetch(downloadUrl);
-    if(!fileRes.ok)throw new Error(`Could not download file (${fileRes.status})`);
-    const arrayBuf=await fileRes.arrayBuffer();
+    const downloadUrl=meta['@microsoft.graph.downloadUrl']||meta['@content.downloadUrl'];
+    let arrayBuf;
+    if(downloadUrl){
+      const fileRes=await fetch(downloadUrl);
+      if(!fileRes.ok)throw new Error(`Could not download file (${fileRes.status})`);
+      arrayBuf=await fileRes.arrayBuffer();
+    } else {
+      // Fallback: use /content endpoint with Authorization header
+      const fileRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${targetId}/content`,{headers:{Authorization:`Bearer ${token}`}});
+      if(!fileRes.ok)throw new Error(`Could not download file (${fileRes.status})`);
+      arrayBuf=await fileRes.arrayBuffer();
+    }
     const wb=XLSX.read(new Uint8Array(arrayBuf),{type:'array'});
     if(!wb.SheetNames.length)throw new Error('Workbook has no worksheets');
 
