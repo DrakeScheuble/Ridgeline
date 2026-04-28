@@ -3170,7 +3170,7 @@ async function estParseWithClaude(subject,bodyText,fromName){
   const prompt=`Extract construction bid invite details from this email. Return ONLY a valid JSON object, no other text.\n\nFrom: ${fromName}\nSubject: ${subject}\n\nBody:\n${bodyText.slice(0,3500)}\n\nReturn JSON with these exact fields (use null if not found):\n{"jobName":null,"gcName":null,"gcContact":null,"bidDueDate":null,"street":null,"city":null,"state":null,"zip":null,"scopeWood":false,"scopeSteel":false,"notes":null}`;
   const res=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
+    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
     body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:512,messages:[{role:'user',content:prompt}]})
   });
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`API error ${res.status}`);}
@@ -3190,7 +3190,7 @@ async function parseBidExcelWithClaude(cellRows){
   const prompt=`Extract construction bid invite details from this spreadsheet data (may include multiple sheets). Return ONLY a valid JSON object, no other text.\n\nSpreadsheet:\n${sheetText}\n\nReturn JSON with these exact fields (use null if not found, booleans for yes/no fields):\n{"jobName":null,"street":null,"city":null,"state":null,"zip":null,"gcName":null,"gcContact":null,"bidDueDate":null,"scopeWood":false,"scopeSteel":false,"sf":null,"tonnage":null,"prevailingWage":false,"workforceTraining":false,"outOfTown":false,"projectDescription":null,"notes":null}\n\nNotes:\n- bidDueDate must be YYYY-MM-DD format. Parse dates like "Friday 05/08/2026 - 5:00 PM PST" as "2026-05-08"\n- gcContact should combine GC estimator name + phone + email if available\n- jobName: prefer the full project name over a short filename\n- scopeWood/scopeSteel: true if any wood or steel scope is described\n- sf: extract numeric value only from strings like "36,040 SF"\n- prevailingWage: false if "NOT REQUIRED" is stated`;
   const res=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
+    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
     body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,messages:[{role:'user',content:prompt}]})
   });
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||`API error ${res.status}`);}
@@ -3267,7 +3267,7 @@ async function importBidFromSP(){
         const fileList=xlsxFiles.map((f,i)=>`${i+1}. ${f.name} (modified ${f.lastModifiedDateTime?.slice(0,10)||'unknown'})`).join('\n');
         const pickRes=await fetch('https://api.anthropic.com/v1/messages',{
           method:'POST',
-          headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
+          headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
           body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:8,messages:[{role:'user',content:`A SharePoint folder for a new construction bid contains these files:\n${fileList}\n\nWhich file number is most likely the bid invite / project info sheet? Reply with ONLY the number.`}]})
         });
         if(pickRes.ok){
